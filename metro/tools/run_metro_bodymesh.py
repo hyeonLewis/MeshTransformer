@@ -5,6 +5,7 @@ Licensed under the MIT license.
 Training and evaluation codes for 
 3D human body mesh reconstruction from an image
 """
+#python metro/tools/run_metro_bodymesh.py --train_yaml Tax-H36m-coco40k-Muco-UP-Mpii/train.yaml --val_yaml human3.6m/valid.protocol2.yaml --arch hrnet-w64 --num_workers 4 --per_gpu_train_batch_size 30 --per_gpu_eval_batch_size 30 --num_hidden_layers 4 --num_attention_heads 4 --lr 1e-4 --num_train_epochs 200 --input_feat_dim 2051,512,128 --hidden_feat_dim 1024,256,128 
 
 from __future__ import absolute_import, division, print_function
 import argparse
@@ -35,7 +36,8 @@ from metro.utils.metric_logger import AverageMeter, EvalMetricsLogger
 from metro.utils.renderer import Renderer, visualize_reconstruction, visualize_reconstruction_test
 from metro.utils.metric_pampjpe import reconstruction_error
 from metro.utils.geometric_layers import orthographic_projection
-
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["OMP_NUM_THREADS"] = '1'
 def save_checkpoint(model, args, epoch, iteration, num_trial=10):
     checkpoint_dir = op.join(args.output_dir, 'checkpoint-{}-{}'.format(
         epoch, iteration))
@@ -603,7 +605,7 @@ def main(args):
     mesh_sampler = Mesh()
 
     # Renderer for visualization
-    renderer = Renderer(faces=smpl.faces.cpu().numpy())
+    renderer = Renderer(focal_length = 10000, img_res = 224, faces=smpl.faces.cpu().numpy())
 
     # Load model
     trans_encoder = []
