@@ -1,6 +1,6 @@
-# MeshTransformer ✨
+# MeshTransformer with pytorch3d✨
 
-This is our research code of [End-to-End Human Pose and Mesh Reconstruction with Transformers](https://arxiv.org/abs/2012.09760). 
+This is modified research code of [End-to-End Human Pose and Mesh Reconstruction with Transformers](https://arxiv.org/abs/2012.09760). 
 
 MEsh TRansfOrmer is a simple yet effective transformer-based method for human pose and mesh reconsruction from an input image. In this repository, we provide our research code for training and testing our proposed method for the following tasks:
 
@@ -12,6 +12,10 @@ MEsh TRansfOrmer is a simple yet effective transformer-based method for human po
 
  <img src="docs/example_keli.gif" width="200"> <img src="docs/example_lijuanw.gif" width="200"> <img src="docs/example_zliu.gif" width="200"> 
 
+## Brief explaination of this repository
+Modified code to use pytorch3d as renderer.
+You can install compatible pytorch3d here (https://anaconda.org/pytorch3d/pytorch3d).
+You can use both CUDA == 10.1 and CUDA == 11.1.
 
 ## Installation
 Check [INSTALL.md](docs/INSTALL.md) for installation instructions.
