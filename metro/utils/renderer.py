@@ -11,11 +11,31 @@ from __future__ import print_function
 import numpy as np
 import cv2
 import code
-from opendr.camera import ProjectPoints
-from opendr.renderer import ColoredRenderer, TexturedRenderer
-from opendr.lighting import LambertianPointLight
+import os
+import sys
+import torch
+import pytorch3d
 import random
-
+# Data structures and functions for rendering
+from pytorch3d.transforms import (
+    Transform3d
+)
+from pytorch3d.structures import Meshes
+from pytorch3d.renderer import (
+    look_at_view_transform,
+    FoVPerspectiveCameras, 
+    PerspectiveCameras,
+    PointLights, 
+    Materials, 
+    RasterizationSettings, 
+    MeshRenderer, 
+    MeshRasterizer,  
+    SoftPhongShader,
+    TexturesUV,
+    TexturesVertex
+)
+os.environ["CUB_HOME"] = os.getcwd() + "/cub-1.10.0"
+sys.path.append(os.path.abspath(''))
 
 # Rotate the points by a specified angle.
 def rotateY(points, angle):
@@ -260,17 +280,17 @@ def visualize_reconstruction(img, img_size, gt_kp, vertices, pred_kp, camera, re
     """Overlays gt_kp and pred_kp on img.
     Draws vert with text.
     Renderer is an instance of SMPLRenderer.
+    camera size = [B, 3]
     """
     gt_vis = gt_kp[:, 2].astype(bool)
     loss = np.sum((gt_kp[gt_vis, :2] - pred_kp[gt_vis])**2)
     debug_text = {"sc": camera[0], "tx": camera[1], "ty": camera[2], "kpl": loss}
     # Fix a flength so i can render this with persp correct scale
     res = img.shape[1]
-    camera_t = np.array([camera[1], camera[2], 2*focal_length/(res * camera[0] +1e-9)])
-    rend_img = renderer.render(vertices, camera_t=camera_t,
-                               img=img, use_bg=True,
-                               focal_length=focal_length,
-                               body_color=color)
+    camera_t = np.array([camera[1], camera[2], 2*focal_length/(res * camera[0] +1e-9)]) #camera_translation
+    
+    rend_img = renderer.visualize_mesh(vertices, camera_t, img) #Composed with pytorch3d
+
     rend_img = draw_text(rend_img, debug_text)
 
     # Draw skeleton
@@ -294,10 +314,9 @@ def visualize_reconstruction_test(img, img_size, gt_kp, vertices, pred_kp, camer
     # Fix a flength so i can render this with persp correct scale
     res = img.shape[1]
     camera_t = np.array([camera[1], camera[2], 2*focal_length/(res * camera[0] +1e-9)])
-    rend_img = renderer.render(vertices, camera_t=camera_t,
-                               img=img, use_bg=True,
-                               focal_length=focal_length,
-                               body_color=color)
+
+    rend_img = renderer.visualize_mesh(vertices, camera_t, img)#Composed with pytorch3d
+
     rend_img = draw_text(rend_img, debug_text)
 
     # Draw skeleton
@@ -320,10 +339,8 @@ def visualize_reconstruction_and_att(img, img_size, vertices_full, vertices, ver
     # Fix a flength so i can render this with persp correct scale
     res = img.shape[1]
     camera_t = np.array([camera[1], camera[2], 2*focal_length/(res * camera[0] +1e-9)])
-    rend_img = renderer.render(vertices_full, camera_t=camera_t,
-                               img=img, use_bg=True, 
-                               focal_length=focal_length, body_color='light_blue')
 
+    rend_img = renderer.visualize_mesh(vertices_full, camera_t, img)#Composed with pytorch3d
 
     heads_num, vertex_num, _ = attention.shape
 
@@ -365,7 +382,7 @@ def visualize_reconstruction_and_att(img, img_size, vertices_full, vertices, ver
         image = np.zeros_like(rend_img)
 
         for jj in range(vertices_norm.shape[0]):
-            x = int(vertices_norm[jj,0])
+            x = int(vertices_norm[jj,0]) 
             y = int(vertices_norm[jj,1])
             cv2.circle(image,(x,y), 1, (255,255,255), -1) 
 
@@ -388,6 +405,7 @@ def visualize_reconstruction_and_att(img, img_size, vertices_full, vertices, ver
             combined = image
         else:
             combined = np.hstack([combined, image])
+    
 
     final = np.hstack([img, combined, rend_img])
 
@@ -402,9 +420,9 @@ def visualize_reconstruction_and_att_local(img, img_size, vertices_full, vertice
     # Fix a flength so i can render this with persp correct scale
     res = img.shape[1]
     camera_t = np.array([camera[1], camera[2], 2*focal_length/(res * camera[0] +1e-9)])
-    rend_img = renderer.render(vertices_full, camera_t=camera_t,
-                               img=img, use_bg=True, 
-                               focal_length=focal_length, body_color=color)
+
+    rend_img = renderer.visualize_mesh(vertices_full, camera_t, img) #Composed with pytorch3d
+
     heads_num, vertex_num, _ = attention.shape
     all_head = np.zeros((vertex_num,vertex_num))
 
@@ -471,11 +489,8 @@ def visualize_reconstruction_no_text(img, img_size, vertices, camera, renderer, 
     # Fix a flength so i can render this with persp correct scale
     res = img.shape[1]
     camera_t = np.array([camera[1], camera[2], 2*focal_length/(res * camera[0] +1e-9)])
-    rend_img = renderer.render(vertices, camera_t=camera_t,
-                               img=img, use_bg=True,
-                               focal_length=focal_length,
-                               body_color=color)
 
+    rend_img = renderer.visualize_mesh(vertices, camera_t, img) #Composed with pytorch3d
 
     combined = np.hstack([img, rend_img])
 
@@ -508,184 +523,79 @@ def cam2pixel(cam_coord, f, c):
     img_coord = np.concatenate((x[:,None], y[:,None], z[:,None]),1)
     return img_coord
 
-
 class Renderer(object):
-    """
-    Render mesh using OpenDR for visualization.
-    """
 
-    def __init__(self, width=800, height=600, near=0.5, far=1000, faces=None):
-        self.colors = {'hand': [.9, .9, .9], 'pink': [.9, .7, .7], 'light_blue': [0.65098039, 0.74117647, 0.85882353] }
-        self.width = width
-        self.height = height
+    def __init__(self, focal_length = 1000, img_res = 224, *args, faces):
+        self.focal_length = ((focal_length, focal_length),)
+        self.camera_center = ((img_res // 2 , img_res // 2),)
+        self.img_res = img_res
         self.faces = faces
-        self.renderer = ColoredRenderer()
 
-    def render(self, vertices, faces=None, img=None,
-               camera_t=np.zeros([3], dtype=np.float32),
-               camera_rot=np.zeros([3], dtype=np.float32),
-               camera_center=None,
-               use_bg=False,
-               bg_color=(0.0, 0.0, 0.0),
-               body_color=None,
-               focal_length=5000,
-               disp_text=False,
-               gt_keyp=None,
-               pred_keyp=None,
-               **kwargs):
-        if img is not None:
-            height, width = img.shape[:2]
-        else:
-            height, width = self.height, self.width
+    def visualize_mesh(self, vertices, camera_t, img):
+        device = torch.device('cuda:0')
+        rend_img = self.__call__(vertices, camera_t, img, device).float() #returns [1, 224, 224, 4]
+        rend_img = rend_img[0, ... , :3] #[224, 224, 3]
+        rend_img_cpu = rend_img.cpu()
+        rend_img = (cv2.rotate(rend_img_cpu.numpy(), cv2.ROTATE_180))
+        rend_img = self.overlay_img(rend_img, img)
 
-        if faces is None:
-            faces = self.faces
+        return rend_img
+    
+    #Added function - Blends original image and rendered mesh
+    def overlay_img(self, rend_img, img):
+        mask = (rend_img == 1)[:,:,:,None]
+        mask = torch.from_numpy(mask).squeeze()
+        mask = mask.cpu().numpy()
+        output = rend_img[:,:,:3] * ~mask + mask * img
 
-        if camera_center is None:
-            camera_center = np.array([width * 0.5,
-                                      height * 0.5])
+        return output
 
-        self.renderer.camera = ProjectPoints(rt=camera_rot,
-                                             t=camera_t,
-                                             f=focal_length * np.ones(2),
-                                             c=camera_center,
-                                             k=np.zeros(5))
-        dist = np.abs(self.renderer.camera.t.r[2] -
-                      np.mean(vertices, axis=0)[2])
-        far = dist + 20
+    def __call__(self, vertices, camera_t, img, device):
+        R, T = torch.from_numpy(np.eye(3)).unsqueeze(dim = 0), torch.from_numpy(camera_t).unsqueeze(dim = 0)
 
-        self.renderer.frustum = {'near': 1.0, 'far': far,
-                                 'width': width,
-                                 'height': height}
+        cameras = PerspectiveCameras(device = device,focal_length=self.focal_length, principal_point = self.camera_center, R = R, T = T, image_size = ((self.img_res, self.img_res),), in_ndc=False)
 
-        if img is not None:
-            if use_bg:
-                self.renderer.background_image = img
-            else:
-                self.renderer.background_image = np.ones_like(
-                    img) * np.array(bg_color)
+        raster_settings = RasterizationSettings(
+            image_size = self.img_res,
+            blur_radius = 0.0)
 
-        if body_color is None:
-            color = self.colors['light_blue']
-        else:
-            color = self.colors[body_color]
+        #lights = PointLights(device=device, location=[[2, 8, 2.1]])
+        lights = PointLights(device=device, location=[[5, 5, -5]])
+        renderer = MeshRenderer(
+            rasterizer = MeshRasterizer(
+                cameras = cameras,
+                raster_settings=raster_settings
+            ),
+            shader=SoftPhongShader( #change the shader
+                device = device,
+                cameras=cameras,
+                lights=lights
+            )
+        )
 
-        if isinstance(self.renderer, TexturedRenderer):
-            color = [1.,1.,1.]
+        #Set reflected light color and shininess of mesh
+        '''
+        materials = Materials(
+            device = device,
+            specular_color=[[0.0, 1.0, 0.0]],
+            shininess=10.0
+        )
+        '''
+        #r, g, b = 1, 192/255.0, 203/255.0 #For pink mesh
 
-        self.renderer.set(v=vertices, f=faces,
-                          vc=color, bgcolor=np.ones(3))
-        albedo = self.renderer.vc
-        # Construct Back Light (on back right corner)
-        yrot = np.radians(120)
+        vertices = torch.from_numpy(vertices).to(device)
+        verts_rgb = torch.ones_like(vertices)[None]
+        #verts_rgb[:, :, 1] = g
+        #verts_rgb[:, :, 2] = b
+        textures = TexturesVertex(verts_features=verts_rgb.to(device)) #part segmentation
 
-        self.renderer.vc = LambertianPointLight(
-            f=self.renderer.f,
-            v=self.renderer.v,
-            num_verts=self.renderer.v.shape[0],
-            light_pos=rotateY(np.array([-200, -100, -100]), yrot),
-            vc=albedo,
-            light_color=np.array([1, 1, 1]))
-
-        # Construct Left Light
-        self.renderer.vc += LambertianPointLight(
-            f=self.renderer.f,
-            v=self.renderer.v,
-            num_verts=self.renderer.v.shape[0],
-            light_pos=rotateY(np.array([800, 10, 300]), yrot),
-            vc=albedo,
-            light_color=np.array([1, 1, 1]))
-
-        #  Construct Right Light
-        self.renderer.vc += LambertianPointLight(
-            f=self.renderer.f,
-            v=self.renderer.v,
-            num_verts=self.renderer.v.shape[0],
-            light_pos=rotateY(np.array([-500, 500, 1000]), yrot),
-            vc=albedo,
-            light_color=np.array([.7, .7, .7]))
-
-        return self.renderer.r
-
-
-    def render_vertex_color(self, vertices, faces=None, img=None,
-               camera_t=np.zeros([3], dtype=np.float32),
-               camera_rot=np.zeros([3], dtype=np.float32),
-               camera_center=None,
-               use_bg=False,
-               bg_color=(0.0, 0.0, 0.0),
-               vertex_color=None,
-               focal_length=5000,
-               disp_text=False,
-               gt_keyp=None,
-               pred_keyp=None,
-               **kwargs):
-        if img is not None:
-            height, width = img.shape[:2]
-        else:
-            height, width = self.height, self.width
-
-        if faces is None:
-            faces = self.faces
-
-        if camera_center is None:
-            camera_center = np.array([width * 0.5,
-                                      height * 0.5])
-
-        self.renderer.camera = ProjectPoints(rt=camera_rot,
-                                             t=camera_t,
-                                             f=focal_length * np.ones(2),
-                                             c=camera_center,
-                                             k=np.zeros(5))
-        dist = np.abs(self.renderer.camera.t.r[2] -
-                      np.mean(vertices, axis=0)[2])
-        far = dist + 20
-
-        self.renderer.frustum = {'near': 1.0, 'far': far,
-                                 'width': width,
-                                 'height': height}
-
-        if img is not None:
-            if use_bg:
-                self.renderer.background_image = img
-            else:
-                self.renderer.background_image = np.ones_like(
-                    img) * np.array(bg_color)
-
-        if vertex_color is None:
-            vertex_color = self.colors['light_blue']
-
-
-        self.renderer.set(v=vertices, f=faces,
-                          vc=vertex_color, bgcolor=np.ones(3))
-        albedo = self.renderer.vc
-        # Construct Back Light (on back right corner)
-        yrot = np.radians(120)
-
-        self.renderer.vc = LambertianPointLight(
-            f=self.renderer.f,
-            v=self.renderer.v,
-            num_verts=self.renderer.v.shape[0],
-            light_pos=rotateY(np.array([-200, -100, -100]), yrot),
-            vc=albedo,
-            light_color=np.array([1, 1, 1]))
-
-        # Construct Left Light
-        self.renderer.vc += LambertianPointLight(
-            f=self.renderer.f,
-            v=self.renderer.v,
-            num_verts=self.renderer.v.shape[0],
-            light_pos=rotateY(np.array([800, 10, 300]), yrot),
-            vc=albedo,
-            light_color=np.array([1, 1, 1]))
-
-        #  Construct Right Light
-        self.renderer.vc += LambertianPointLight(
-            f=self.renderer.f,
-            v=self.renderer.v,
-            num_verts=self.renderer.v.shape[0],
-            light_pos=rotateY(np.array([-500, 500, 1000]), yrot),
-            vc=albedo,
-            light_color=np.array([.7, .7, .7]))
-
-        return self.renderer.r
+        vertices = vertices.reshape(-1, vertices.shape[0], vertices.shape[1])
+        faces = torch.from_numpy(self.faces.astype(np.float32))
+        faces = faces.unsqueeze(dim = 0).to(device)
+        
+        mesh = Meshes(
+            verts = vertices,
+            faces = faces,
+            textures = textures
+        )
+        return renderer(mesh, cameras = cameras, lights = lights)
