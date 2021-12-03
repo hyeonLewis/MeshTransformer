@@ -5,6 +5,8 @@ Licensed under the MIT license.
 End-to-end inference codes for 
 3D human body mesh reconstruction from an image
 """
+#python ./metro/tools/end2end_inference_bodymesh.py --resume_checkpoint ./models/metro_release/metro_3dpw_state_dict.bin --image_file_or_path ./samples/human-body
+#python ./metro/tools/end2end_inference_handmesh.py --resume_checkpoint ./models/metro_release/metro_hand_state_dict.bin --image_file_or_path ./samples/hand
 
 from __future__ import absolute_import, division, print_function
 import argparse
@@ -203,7 +205,7 @@ def main(args):
     mesh_smpl = SMPL().to(args.device)
     mesh_sampler = Mesh()
     # Renderer for visualization
-    renderer = Renderer(faces=mesh_smpl.faces.cpu().numpy())
+    renderer = Renderer(focal_length = 1000, img_res = 224, faces=mesh_smpl.faces.cpu().numpy())
     # Load pretrained model    
     logger.info("Inference: Loading from checkpoint {}".format(args.resume_checkpoint))
 
