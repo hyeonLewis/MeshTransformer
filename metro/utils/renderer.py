@@ -2,6 +2,8 @@
 Rendering tools for 3D mesh visualization on 2D image.
 
 Parts of the code are taken from https://github.com/akanazawa/hmr
+
+Modified by hyeonwoo Kim, openDR to pytorch3d
 """
 
 from __future__ import absolute_import
